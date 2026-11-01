@@ -12,7 +12,27 @@ import kotlin.math.min
 
 object Runner {
 
+    /** The AI model is used for images and for videos up to 3 minutes (AI on every frame would take too long). */
+    private const val AI_VIDEO_MAX_MS = 180_000L
+
     fun run(
+        ctx: Context, job: JobSpec,
+        cb: (Float, String, Int, String) -> Unit, cancelled: () -> Boolean
+    ): Project {
+        var allow = true
+        if (job.video) {
+            val u = job.uri
+            allow = try { u != null && VideoPipeline.probe(ctx, u).durationMs <= AI_VIDEO_MAX_MS } catch (e: Exception) { false }
+        }
+        Lama.prepare(ctx, allow, cb, cancelled)
+        try {
+            return runInner(ctx, job, cb, cancelled)
+        } finally {
+            Lama.enabled = false
+        }
+    }
+
+    private fun runInner(
         ctx: Context, job: JobSpec,
         cb: (Float, String, Int, String) -> Unit, cancelled: () -> Boolean
     ): Project {

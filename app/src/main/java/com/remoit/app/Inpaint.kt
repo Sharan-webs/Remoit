@@ -49,6 +49,7 @@ class ItemProcessor(private val item: MaskItem) {
 
     private var patchOut: Array<FloatArray>? = null
 
+    private var lastRecompute = 0L
     private var active = false
     private var haveResult = false
     private var anchorSig: FloatArray? = null
@@ -73,7 +74,9 @@ class ItemProcessor(private val item: MaskItem) {
         val sig = FloatArray(sigIdx.size)
         for (k in sigIdx.indices) sig[k] = ch[0][sigIdx[k]]
         val anchor = anchorSig
-        val reuse = haveResult && anchor != null && mad(sig, anchor) < REUSE_T
+        val ai = Lama.enabled
+        var reuse = haveResult && anchor != null && mad(sig, anchor) < (if (ai) AI_REUSE_T else REUSE_T)
+        if (reuse && ai && frameIdx - lastRecompute >= AI_REFRESH_FRAMES) reuse = false
         if (!reuse) {
             var smooth = false
             if (haveResult && active) {
@@ -91,6 +94,7 @@ class ItemProcessor(private val item: MaskItem) {
             }
             anchorSig = sig
             haveResult = true
+            lastRecompute = frameIdx
         }
         if (!active) return false
         composite(frameIdx)
@@ -123,7 +127,7 @@ class ItemProcessor(private val item: MaskItem) {
             var acc = 0
             var med = 0
             while (med < 255 && acc + hist[med] < cnt / 2) { acc += hist[med]; med++ }
-            val thr = (med * 1.8f + 4f).coerceIn(6f, 38f)
+            val thr = (med * 1.5f + 3f).coerceIn(5f, 34f)
             val text = ByteArray(n)
             var tc = 0
             for (i in 0 until n) {
@@ -139,19 +143,24 @@ class ItemProcessor(private val item: MaskItem) {
             core = base
         }
 
-        val alphaCore = Inpaint.dilate(core, w, h, 1)
-        val solve = Inpaint.dilate(core, w, h, 2)
+        // wide margin: the faint outline / glow around text is what usually stays visible ("trace")
+        val alphaCore = Inpaint.dilate(core, w, h, 3)
+        val solve = Inpaint.dilate(core, w, h, 5)
 
         var holeCount = 0
         for (i in 0 until n) if (solve[i].toInt() == 1) holeCount++
         val iters = if (holeCount < 600) 12 else 26
         if (!Inpaint.harmonic(ch, solve, w, h, fill, iters)) return
 
-        // real texture copied from the clean surroundings (no blur). Old smooth+noise path is only the fallback.
+        // 1) free AI (LaMa) rebuilds what was under the hole, if the model is on the phone
+        var usedAi = false
+        if (Lama.enabled) usedAi = Lama.fill(ch, solve, w, h, fill)
+
+        // 2) real texture copied from the clean surroundings (grain, noise), so it never looks smooth / erased
         var patched = false
         try {
             val po = patchOut ?: Array(3) { FloatArray(n) }.also { patchOut = it }
-            if (PatchFill(PATCH_SEED).run(fill, solve, w, h, po, fast)) {
+            if (PatchFill(PATCH_SEED).run(fill, solve, w, h, po, fast, if (usedAi) 0.5f else 1f)) {
                 for (i in 0 until n) {
                     if (solve[i].toInt() == 1) { fill[0][i] = po[0][i]; fill[1][i] = po[1][i]; fill[2][i] = po[2][i] }
                 }
@@ -161,7 +170,8 @@ class ItemProcessor(private val item: MaskItem) {
         } catch (e: OutOfMemoryError) {
             patched = false
         }
-        if (!patched) addTexture(solve)
+        if (usedAi) for (c in 0..2) sigma[c] = 0f
+        if (!patched && !usedAi) addTexture(solve)
 
         val a = Inpaint.blur3(alphaCore, w, h)
         var cntA = 0
@@ -281,6 +291,8 @@ class ItemProcessor(private val item: MaskItem) {
 
     companion object {
         private const val REUSE_T = 2.0f
+        private const val AI_REUSE_T = 5.0f
+        private const val AI_REFRESH_FRAMES = 8L
         private const val MAX_MIRROR = 20
         private const val PATCH_SEED = 0x2F6E2B1DL
     }

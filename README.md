@@ -1,7 +1,7 @@
 # remoit  (project: Watermarko)
 
 Removes text, logos, dates and captions from **videos (up to 2 h 30 min)** and **images**, on the phone.
-Same look as PIXEL•X. No server, nothing is uploaded.
+Same look as PIXEL•X. No server, your photos and videos are never uploaded.
 
 ## How it works
 
@@ -21,6 +21,19 @@ Same look as PIXEL•X. No server, nothing is uploaded.
 * Soft feathered border, no visible rectangle.
 * Static scenes reuse the previous result (stable, fast). Moving scenes are recomputed every frame.
 * Only the marked areas are touched; the rest of every frame is copied as-is.
+
+## Free AI mode (v4)
+
+* Uses **LaMa** (big-lama, Apache-2.0) through **ONNX Runtime** (MIT). Both are free.
+* The model file (about 208 MB) is downloaded **once**, the first time you press process (Wi-Fi recommended), from
+  `huggingface.co/Carve/LaMa-ONNX`. After that everything runs on the phone, offline. Needs the INTERNET permission only for this download.
+* Images: always AI + texture fill. Videos up to 3 minutes: AI is refreshed every few frames (and when the scene changes),
+  longer videos use the built-in texture fill only (AI on every frame would take hours).
+* If the download or the AI fails for any reason, remoit falls back to the built-in texture fill automatically.
+* The AI colours are then given real grain copied from the surroundings (PatchFill) so the area does not look smooth.
+* Cleanup margin around the marked text is wider (no outline / glow left behind), text detection is more sensitive.
+
+Where to change: `Lama.kt` (model URL, size check), `Runner.kt` (`AI_VIDEO_MAX_MS`), `Inpaint.kt` (`AI_REFRESH_FRAMES`, margins `dilate(core, ...)`).
 
 ## Quality (VideoPipeline.kt)
 

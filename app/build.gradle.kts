@@ -67,6 +67,9 @@ dependencies {
     // On-device text finder (the model is bundled inside the app and works offline)
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
+    // Free AI inpainting (LaMa) runtime, MIT licence. The model itself is downloaded once on first use.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
