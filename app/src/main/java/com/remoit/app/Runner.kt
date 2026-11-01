@@ -14,7 +14,7 @@ object Runner {
 
     fun run(
         ctx: Context, job: JobSpec,
-        cb: (String, Float, Int, String) -> Unit, cancelled: () -> Boolean
+        cb: (Float, String, Int, String) -> Unit, cancelled: () -> Boolean
     ): Project {
         val id = System.currentTimeMillis().toString()
         val dir = File(ctx.filesDir, "results")
