@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_splash_vec">
+    <target android:name="wipe" android:animation="@animator/splash_wipe" />
+    <target android:name="line1" android:animation="@animator/splash_line1" />
+    <target android:name="line2" android:animation="@animator/splash_line2" />
+    <target android:name="line3" android:animation="@animator/splash_line3" />
+</animated-vector>

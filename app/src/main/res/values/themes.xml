@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.Remoit" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/px_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- Launch splash: the animated icon plays on Android 12+ -->
+    <style name="Theme.Remoit.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/px_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/avd_splash</item>
+        <item name="windowSplashScreenAnimationDuration">1000</item>
+        <item name="postSplashScreenTheme">@style/Theme.Remoit</item>
+    </style>
+</resources>
