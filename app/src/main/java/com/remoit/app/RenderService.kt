@@ -44,7 +44,7 @@ class RenderService : Service() {
             try {
                 val p = Runner.run(
                     applicationContext, spec,
-                    { prog, stage, eta, detail ->
+                    { stage, prog, eta, detail ->
                         Hub.state.value = Hub.State.Running(stage, prog, eta, detail)
                         val now = System.currentTimeMillis()
                         if (now - lastNotif > 1000) {
