@@ -44,6 +44,11 @@ class ItemProcessor(private val item: MaskItem) {
     private val gain = FloatArray(n)
     private val sigma = FloatArray(3)
 
+    /** Video frames use a lighter (faster) texture search; images use the full one. */
+    var fast = false
+
+    private var patchOut: Array<FloatArray>? = null
+
     private var active = false
     private var haveResult = false
     private var anchorSig: FloatArray? = null
@@ -142,7 +147,21 @@ class ItemProcessor(private val item: MaskItem) {
         val iters = if (holeCount < 600) 12 else 26
         if (!Inpaint.harmonic(ch, solve, w, h, fill, iters)) return
 
-        addTexture(solve)
+        // real texture copied from the clean surroundings (no blur). Old smooth+noise path is only the fallback.
+        var patched = false
+        try {
+            val po = patchOut ?: Array(3) { FloatArray(n) }.also { patchOut = it }
+            if (PatchFill(PATCH_SEED).run(fill, solve, w, h, po, fast)) {
+                for (i in 0 until n) {
+                    if (solve[i].toInt() == 1) { fill[0][i] = po[0][i]; fill[1][i] = po[1][i]; fill[2][i] = po[2][i] }
+                }
+                for (c in 0..2) sigma[c] = 0f
+                patched = true
+            }
+        } catch (e: OutOfMemoryError) {
+            patched = false
+        }
+        if (!patched) addTexture(solve)
 
         val a = Inpaint.blur3(alphaCore, w, h)
         var cntA = 0
@@ -263,6 +282,7 @@ class ItemProcessor(private val item: MaskItem) {
     companion object {
         private const val REUSE_T = 2.0f
         private const val MAX_MIRROR = 20
+        private const val PATCH_SEED = 0x2F6E2B1DL
     }
 }
 

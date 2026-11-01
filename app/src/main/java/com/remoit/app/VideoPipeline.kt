@@ -149,6 +149,7 @@ object VideoPipeline {
             }
 
             items = MaskBuilder.build(spec, fw, fh, rot)
+            for (it in items) it.proc.fast = true   // lighter texture search per frame (video)
             if (items.isEmpty()) throw IllegalArgumentException("Nothing is marked. Create a box or draw with the pen first.")
 
             val d = MediaCodec.createDecoderByType(mime)
