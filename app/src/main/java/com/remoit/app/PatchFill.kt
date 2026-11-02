@@ -102,8 +102,8 @@ class PatchFill(seed: Long) {
      * [fast]: fewer passes (used for video frames). Returns false if there was nothing usable to copy from.
      */
     fun run(init: Array<FloatArray>, hole0: ByteArray, w0: Int, h0: Int, out: Array<FloatArray>, fast: Boolean, detail: Float = 1f): Boolean {
-        val r = 3
-        val maxLv = 3
+        val r = if (fast) 2 else 3
+        val maxLv = if (fast) 2 else 3
 
         // ---- pyramid
         val imgs = ArrayList<Array<FloatArray>>()
@@ -219,7 +219,7 @@ class PatchFill(seed: Long) {
             }
 
             val emIters = if (lv == 0) (if (fast) 2 else 4) else (if (fast) 2 else 3)
-            val pmIters = if (fast) 3 else 4
+            val pmIters = if (fast) 2 else 4
             val acc = Array(3) { FloatArray(n) }
             val wsum = FloatArray(n)
             var holeCount = 0

@@ -49,7 +49,13 @@ class ItemProcessor(private val item: MaskItem) {
 
     private var patchOut: Array<FloatArray>? = null
 
-    private var lastRecompute = 0L
+    // texture cache for the quick updates
+    private var detail: Array<FloatArray>? = null
+    private var detailSolve: ByteArray? = null
+    private var detailIters = 12
+    private var detailValid = false
+    private var lastFull = -1_000_000L
+    private var lastAiFrame = -1_000_000L
     private var active = false
     private var haveResult = false
     private var anchorSig: FloatArray? = null
@@ -69,40 +75,68 @@ class ItemProcessor(private val item: MaskItem) {
         sigIdx = list.toIntArray()
     }
 
-    /** True if something must be blended into the frame. Call after filling [ch]. */
+    /**
+     * True if something must be blended into the frame. Call after filling [ch].
+     *
+     * Speed plan (this is what makes video fast):
+     *  1. nothing changed            -> reuse the last result (free)
+     *  2. small change               -> quick update: texture of the last full erase, colours re-fitted to this frame (a few ms)
+     *  3. big change, full erase used very recently -> light erase (a few ms)
+     *  4. otherwise                  -> full erase (AI + texture copy), at most about once per second
+     */
     fun process(frameIdx: Long): Boolean {
         val sig = FloatArray(sigIdx.size)
         for (k in sigIdx.indices) sig[k] = ch[0][sigIdx[k]]
         val anchor = anchorSig
-        val ai = Lama.enabled
-        var reuse = haveResult && anchor != null && mad(sig, anchor) < (if (ai) AI_REUSE_T else REUSE_T)
-        if (reuse && ai && frameIdx - lastRecompute >= AI_REFRESH_FRAMES) reuse = false
-        if (!reuse) {
-            var smooth = false
-            if (haveResult && active) {
-                for (c in 0..2) System.arraycopy(fill[c], 0, prevFill[c], 0, n)
-                if (prevHole.size != n) prevHole = BooleanArray(n)
-                for (i in 0 until n) prevHole[i] = alpha[i] > 0f
-                smooth = anchor != null && mad(sig, anchor) < 7f
+        val m = if (anchor != null) mad(sig, anchor) else Float.MAX_VALUE
+        val sinceFull = frameIdx - lastFull
+
+        if (!(haveResult && m < REUSE_T)) {
+            var done = false
+            if (haveResult && detailValid && m < BIG_T && sinceFull < MAX_CHEAP_FRAMES) {
+                done = cheapUpdate()
             }
-            recompute()
-            if (active && smooth) {
-                for (k in holeIdx.indices) {
-                    val i = holeIdx[k]
-                    if (prevHole[i]) for (c in 0..2) fill[c][i] = prevFill[c][i] * 0.4f + fill[c][i] * 0.6f
+            if (!done) {
+                val lite = haveResult && sinceFull < MIN_FULL_GAP
+                var smooth = false
+                if (haveResult && active) {
+                    for (c in 0..2) System.arraycopy(fill[c], 0, prevFill[c], 0, n)
+                    if (prevHole.size != n) prevHole = BooleanArray(n)
+                    for (i in 0 until n) prevHole[i] = alpha[i] > 0f
+                    smooth = anchor != null && m < 7f
                 }
+                recompute(frameIdx, lite)
+                if (active && smooth) {
+                    for (k in holeIdx.indices) {
+                        val i = holeIdx[k]
+                        if (prevHole[i]) for (c in 0..2) fill[c][i] = prevFill[c][i] * 0.4f + fill[c][i] * 0.6f
+                    }
+                }
+                anchorSig = sig
+                haveResult = true
             }
-            anchorSig = sig
-            haveResult = true
-            lastRecompute = frameIdx
         }
         if (!active) return false
         composite(frameIdx)
         return true
     }
 
-    private fun recompute() {
+    /** Same texture as the last full erase, but the smooth colours are re-fitted to the current frame. */
+    private fun cheapUpdate(): Boolean {
+        val sv = detailSolve ?: return false
+        val d = detail ?: return false
+        if (!Inpaint.harmonic(ch, sv, w, h, tmp, detailIters)) return false
+        for (i in 0 until n) {
+            if (sv[i].toInt() == 1) {
+                for (c in 0..2) fill[c][i] = (tmp[c][i] + d[c][i]).coerceIn(0f, 255f)
+            }
+        }
+        return true
+    }
+
+    private fun recompute(frameIdx: Long, lite: Boolean) {
         active = false
+        detailValid = false
         holeIdx = IntArray(0)
         val base = item.mask
         val core: ByteArray
@@ -127,7 +161,7 @@ class ItemProcessor(private val item: MaskItem) {
             var acc = 0
             var med = 0
             while (med < 255 && acc + hist[med] < cnt / 2) { acc += hist[med]; med++ }
-            val thr = (med * 1.5f + 3f).coerceIn(5f, 34f)
+            val thr = (med * 1.8f + 4f).coerceIn(6f, 38f)
             val text = ByteArray(n)
             var tc = 0
             for (i in 0 until n) {
@@ -143,35 +177,56 @@ class ItemProcessor(private val item: MaskItem) {
             core = base
         }
 
-        // wide margin: the faint outline / glow around text is what usually stays visible ("trace")
-        val alphaCore = Inpaint.dilate(core, w, h, 3)
-        val solve = Inpaint.dilate(core, w, h, 5)
+        // margin around the text: the faint outline / glow is what usually stays visible ("trace")
+        val alphaCore = Inpaint.dilate(core, w, h, 2)
+        val solve = Inpaint.dilate(core, w, h, 4)
 
         var holeCount = 0
         for (i in 0 until n) if (solve[i].toInt() == 1) holeCount++
         val iters = if (holeCount < 600) 12 else 26
         if (!Inpaint.harmonic(ch, solve, w, h, fill, iters)) return
 
-        // 1) free AI (LaMa) rebuilds what was under the hole, if the model is on the phone
-        var usedAi = false
-        if (Lama.enabled) usedAi = Lama.fill(ch, solve, w, h, fill)
+        if (lite) {
+            // light erase: mirrored fine structure + grain (a few ms)
+            addTexture(solve)
+        } else {
+            val smoothCopy = Array(3) { fill[it].copyOf() }
 
-        // 2) real texture copied from the clean surroundings (grain, noise), so it never looks smooth / erased
-        var patched = false
-        try {
-            val po = patchOut ?: Array(3) { FloatArray(n) }.also { patchOut = it }
-            if (PatchFill(PATCH_SEED).run(fill, solve, w, h, po, fast, if (usedAi) 0.5f else 1f)) {
-                for (i in 0 until n) {
-                    if (solve[i].toInt() == 1) { fill[0][i] = po[0][i]; fill[1][i] = po[1][i]; fill[2][i] = po[2][i] }
-                }
-                for (c in 0..2) sigma[c] = 0f
-                patched = true
+            // 1) free AI (LaMa) rebuilds what was under the hole, if the model is on the phone
+            var usedAi = false
+            if (Lama.enabled && frameIdx - lastAiFrame >= AI_MIN_GAP) {
+                usedAi = Lama.fill(ch, solve, w, h, fill)
+                if (usedAi) lastAiFrame = frameIdx
             }
-        } catch (e: OutOfMemoryError) {
-            patched = false
+
+            // 2) real texture copied from the clean surroundings (grain, noise), so it never looks smooth / erased
+            var patched = false
+            try {
+                val po = patchOut ?: Array(3) { FloatArray(n) }.also { patchOut = it }
+                if (PatchFill(PATCH_SEED).run(fill, solve, w, h, po, fast || usedAi, if (usedAi) 0.5f else 1f)) {
+                    for (i in 0 until n) {
+                        if (solve[i].toInt() == 1) { fill[0][i] = po[0][i]; fill[1][i] = po[1][i]; fill[2][i] = po[2][i] }
+                    }
+                    for (c in 0..2) sigma[c] = 0f
+                    patched = true
+                }
+            } catch (e: OutOfMemoryError) {
+                patched = false
+            }
+            if (usedAi) for (c in 0..2) sigma[c] = 0f
+            if (!patched && !usedAi) addTexture(solve)
+
+            // remember the texture (result minus smooth colours) for the quick updates of the next frames
+            val dt = detail ?: Array(3) { FloatArray(n) }.also { detail = it }
+            for (i in 0 until n) {
+                val inS = solve[i].toInt() == 1
+                for (c in 0..2) dt[c][i] = if (inS) fill[c][i] - smoothCopy[c][i] else 0f
+            }
+            detailSolve = solve
+            detailIters = iters
+            detailValid = true
+            lastFull = frameIdx
         }
-        if (usedAi) for (c in 0..2) sigma[c] = 0f
-        if (!patched && !usedAi) addTexture(solve)
 
         val a = Inpaint.blur3(alphaCore, w, h)
         var cntA = 0
@@ -291,8 +346,10 @@ class ItemProcessor(private val item: MaskItem) {
 
     companion object {
         private const val REUSE_T = 2.0f
-        private const val AI_REUSE_T = 5.0f
-        private const val AI_REFRESH_FRAMES = 8L
+        private const val BIG_T = 16.0f            // bigger change than this = new scene, quick update is not enough
+        private const val MAX_CHEAP_FRAMES = 30L    // quick updates for at most this many frames after a full erase
+        private const val MIN_FULL_GAP = 30L        // full erase at most about once per second of video
+        private const val AI_MIN_GAP = 90L          // the AI model itself at most about once per 3 seconds of video
         private const val MAX_MIRROR = 20
         private const val PATCH_SEED = 0x2F6E2B1DL
     }

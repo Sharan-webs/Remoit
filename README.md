@@ -27,13 +27,15 @@ Same look as PIXEL•X. No server, your photos and videos are never uploaded.
 * Uses **LaMa** (big-lama, Apache-2.0) through **ONNX Runtime** (MIT). Both are free.
 * The model file (about 208 MB) is downloaded **once**, the first time you press process (Wi-Fi recommended), from
   `huggingface.co/Carve/LaMa-ONNX`. After that everything runs on the phone, offline. Needs the INTERNET permission only for this download.
-* Images: always AI + texture fill. Videos up to 3 minutes: AI is refreshed every few frames (and when the scene changes),
-  longer videos use the built-in texture fill only (AI on every frame would take hours).
+* Images: AI + texture fill, once per marked area.
+* Videos are fast because of a tiered plan (see `Inpaint.kt`, `process`): unchanged frames are reused, small changes use a quick
+  update (texture of the last full erase, colours re-fitted to the new frame, a few ms), and the full erase runs at most about once per second.
+  The AI model itself runs at most about once per 3 seconds of video, and only for videos up to 3 minutes.
 * If the download or the AI fails for any reason, remoit falls back to the built-in texture fill automatically.
 * The AI colours are then given real grain copied from the surroundings (PatchFill) so the area does not look smooth.
-* Cleanup margin around the marked text is wider (no outline / glow left behind), text detection is more sensitive.
+* Cleanup margin around the marked text is slightly wider, so no outline / glow is left behind.
 
-Where to change: `Lama.kt` (model URL, size check), `Runner.kt` (`AI_VIDEO_MAX_MS`), `Inpaint.kt` (`AI_REFRESH_FRAMES`, margins `dilate(core, ...)`).
+Where to change: `Lama.kt` (model URL, size check), `Runner.kt` (`AI_VIDEO_MAX_MS`), `Inpaint.kt` (`MIN_FULL_GAP`, `AI_MIN_GAP`, `BIG_T`, margins `dilate(core, ...)`).
 
 ## Quality (VideoPipeline.kt)
 
